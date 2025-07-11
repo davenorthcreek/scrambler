@@ -53,10 +53,12 @@ apt-get upgrade -y
 print_status "Installing Python and system dependencies..."
 apt-get install -y python3 python3-pip python3-venv nginx git supervisor
 
+# Store original directory
+ORIGINAL_DIR=$(pwd)
+
 # Create application directory
 print_status "Creating application directory..."
 mkdir -p $APP_DIR
-cd $APP_DIR
 
 # Create application user
 print_status "Creating application user..."
@@ -66,9 +68,12 @@ fi
 
 # Copy application files (assumes files are in current directory)
 print_status "Setting up application files..."
-cp ./app.py $APP_DIR/
-cp ./requirements.txt $APP_DIR/
-cp ./README.md $APP_DIR/
+cp $ORIGINAL_DIR/app.py $APP_DIR/
+cp $ORIGINAL_DIR/requirements.txt $APP_DIR/
+cp $ORIGINAL_DIR/README.md $APP_DIR/
+
+# Change to application directory
+cd $APP_DIR
 
 # Create virtual environment
 print_status "Creating Python virtual environment..."
