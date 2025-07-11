@@ -19,7 +19,7 @@ APP_NAME="sentence-scrambler"
 APP_DIR="/opt/$APP_NAME"
 SERVICE_NAME="sentence-scrambler"
 STREAMLIT_PORT=8501
-NGINX_PORT=80
+APACHE_PORT=80
 
 # Function to print colored output
 print_status() {
@@ -51,7 +51,7 @@ apt-get upgrade -y
 
 # Install Python and dependencies
 print_status "Installing Python and system dependencies..."
-apt-get install -y python3 python3-pip python3-venv nginx git supervisor
+apt-get install -y python3 python3-pip python3-venv apache2 git supervisor
 
 # Store original directory
 ORIGINAL_DIR=$(pwd)
@@ -126,48 +126,57 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# Configure Nginx
-print_status "Configuring Nginx..."
-cat > /etc/nginx/sites-available/$APP_NAME << EOF
-server {
-    listen $NGINX_PORT;
-    server_name _;
+# Configure Apache2
+print_status "Configuring Apache2..."
+
+# Enable required Apache modules
+a2enmod proxy
+a2enmod proxy_http
+a2enmod proxy_wstunnel
+a2enmod headers
+a2enmod rewrite
+
+# Create Apache virtual host
+cat > /etc/apache2/sites-available/$APP_NAME.conf << EOF
+<VirtualHost *:$APACHE_PORT>
+    ServerName $APP_NAME
+    DocumentRoot $APP_DIR
     
     # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-XSS-Protection "1; mode=block"
     
-    # Main application
-    location / {
-        proxy_pass http://127.0.0.1:$STREAMLIT_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 86400;
-    }
+    # Proxy to Streamlit
+    ProxyPreserveHost On
+    ProxyPass /health !
+    ProxyPass / http://127.0.0.1:$STREAMLIT_PORT/
+    ProxyPassReverse / http://127.0.0.1:$STREAMLIT_PORT/
+    
+    # WebSocket support for Streamlit
+    RewriteEngine On
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/?(.*) "ws://127.0.0.1:$STREAMLIT_PORT/\$1" [P,L]
     
     # Health check endpoint
-    location /health {
-        access_log off;
-        return 200 "healthy\n";
-        add_header Content-Type text/plain;
-    }
-}
+    Alias /health /var/www/html/health.html
+    
+    # Logging
+    ErrorLog \${APACHE_LOG_DIR}/$APP_NAME-error.log
+    CustomLog \${APACHE_LOG_DIR}/$APP_NAME-access.log combined
+</VirtualHost>
 EOF
 
-# Enable Nginx site
-ln -sf /etc/nginx/sites-available/$APP_NAME /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
+# Create health check file
+echo "healthy" > /var/www/html/health.html
 
-# Test Nginx configuration
-print_status "Testing Nginx configuration..."
-nginx -t
+# Enable the site
+a2ensite $APP_NAME.conf
+
+# Test Apache configuration
+print_status "Testing Apache configuration..."
+apache2ctl configtest
 
 # Set proper permissions
 print_status "Setting file permissions..."
@@ -179,8 +188,8 @@ print_status "Starting services..."
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl start $SERVICE_NAME
-systemctl enable nginx
-systemctl restart nginx
+systemctl enable apache2
+systemctl restart apache2
 
 # Create startup script
 print_status "Creating management scripts..."
@@ -189,7 +198,7 @@ cat > /usr/local/bin/sentence-scrambler << 'EOF'
 case "$1" in
     start)
         sudo systemctl start sentence-scrambler
-        sudo systemctl start nginx
+        sudo systemctl start apache2
         echo "Sentence Scrambler started"
         ;;
     stop)
@@ -198,7 +207,7 @@ case "$1" in
         ;;
     restart)
         sudo systemctl restart sentence-scrambler
-        sudo systemctl restart nginx
+        sudo systemctl restart apache2
         echo "Sentence Scrambler restarted"
         ;;
     status)
@@ -259,7 +268,7 @@ chmod +x /usr/local/bin/backup-sentence-scrambler
 if command -v ufw &> /dev/null; then
     print_status "Configuring firewall..."
     ufw allow ssh
-    ufw allow $NGINX_PORT
+    ufw allow $APACHE_PORT
     ufw --force enable
 fi
 
@@ -277,11 +286,11 @@ else
     exit 1
 fi
 
-if systemctl is-active --quiet nginx; then
-    print_success "Nginx service is running"
+if systemctl is-active --quiet apache2; then
+    print_success "Apache2 service is running"
 else
-    print_error "Nginx service failed to start"
-    systemctl status nginx
+    print_error "Apache2 service failed to start"
+    systemctl status apache2
     exit 1
 fi
 
@@ -294,7 +303,7 @@ echo "📋 Deployment Summary:"
 echo "  - Application: Sentence Scrambler"
 echo "  - Status: Running"
 echo "  - URL: http://$SERVER_IP"
-echo "  - Port: $NGINX_PORT"
+echo "  - Port: $APACHE_PORT"
 echo "  - Service: $SERVICE_NAME"
 echo
 echo "📖 Management Commands:"
@@ -309,7 +318,7 @@ echo "📁 Important Paths:"
 echo "  - App Directory: $APP_DIR"
 echo "  - Config File: $APP_DIR/.streamlit/config.toml"
 echo "  - Service File: /etc/systemd/system/$SERVICE_NAME.service"
-echo "  - Nginx Config: /etc/nginx/sites-available/$APP_NAME"
+echo "  - Apache Config: /etc/apache2/sites-available/$APP_NAME.conf"
 echo
 echo "🔧 Next Steps:"
 echo "1. Test the application by visiting http://$SERVER_IP"
