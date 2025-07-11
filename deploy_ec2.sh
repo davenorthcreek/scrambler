@@ -66,9 +66,9 @@ fi
 
 # Copy application files (assumes files are in current directory)
 print_status "Setting up application files..."
-cp /tmp/app.py $APP_DIR/
-cp /tmp/requirements.txt $APP_DIR/
-cp /tmp/README.md $APP_DIR/
+cp app.py $APP_DIR/
+cp requirements.txt $APP_DIR/
+cp README.md $APP_DIR/
 
 # Create virtual environment
 print_status "Creating Python virtual environment..."
